@@ -1589,6 +1589,7 @@ class TBGatewayService:
                     device]
 
                 if devices_data_in_event_pack[device].get("attributes"):
+                    devices_data_in_event_pack[device]["attributes"]["projectId"] = 54
                     if device == self.name or device == "currentThingsBoardGateway":
                         self._published_events.put(
                             self.send_attributes(devices_data_in_event_pack[device]["attributes"]))
@@ -1597,6 +1598,9 @@ class TBGatewayService:
                                                                            devices_data_in_event_pack[
                                                                                device]["attributes"]))
                 if devices_data_in_event_pack[device].get("telemetry"):
+                    for telemetry_entry in devices_data_in_event_pack[device]["telemetry"]:
+                        if isinstance(telemetry_entry, dict) and "values" in telemetry_entry:
+                            telemetry_entry["values"]["projectId"] = 54
                     if device == self.name or device == "currentThingsBoardGateway":
                         self._published_events.put(
                             self.send_telemetry(devices_data_in_event_pack[device]["telemetry"]))
