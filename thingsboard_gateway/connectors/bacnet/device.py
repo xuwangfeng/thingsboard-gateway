@@ -72,6 +72,10 @@ class Device:
         self.__objects_rescan_period = self.__config.get('devicesRescanObjectsPeriodSeconds', 60)
         self.rescan_objects_config = []
 
+        # Virtual device support
+        self.__virtual_key = None
+        self.__virtual_index = config.get('virtualIndex', None)
+
         self.__config_poll_period = self.__config.get('pollPeriod', 10000) / 1000
         self.__poll_period = self.__config_poll_period
         self.attributes_updates = self.__config.get('attributeUpdates', [])
@@ -82,6 +86,15 @@ class Device:
 
     def __str__(self):
         return f"Device(name={self.name}, address={self.details.address})"
+
+    def set_virtual_key(self, key):
+        """Set virtual device key"""
+        self.__virtual_key = key
+
+    @property
+    def virtual_key(self):
+        """Get virtual device key, return object_id if not a virtual device"""
+        return self.__virtual_key if self.__virtual_key else self.details.object_id
 
     @property
     def config(self):
@@ -175,6 +188,20 @@ class Device:
                 return device_config
             elif apdu_address in device_config.get('altResponsesAddresses', []):
                 return device_config
+
+    @staticmethod
+    def find_all_in_config(devices_config, apdu):
+        """Return all device configurations that match the address"""
+        apdu_address = apdu.pduSource.__str__()
+        matched_configs = []
+
+        for device_config in devices_config:
+            if Device.is_address_match(apdu_address, device_config.get('address')):
+                matched_configs.append(device_config)
+            elif apdu_address in device_config.get('altResponsesAddresses', []):
+                matched_configs.append(device_config)
+
+        return matched_configs
 
     @staticmethod
     def is_address_match(address, pattern):
@@ -372,7 +399,9 @@ class Devices:
 
         await self.__lock.acquire()
         try:
-            self.__devices[device.details.object_id] = device
+            # Use virtual key for storage
+            key = device.virtual_key
+            self.__devices[key] = device
             self.__devices_by_name[device.name] = device
         finally:
             self.__lock.release()
@@ -393,6 +422,18 @@ class Devices:
             self.__lock.release()
 
         return item
+
+    async def get_virtual_device_count(self, physical_device_id):
+        """Get the number of virtual devices created for a physical device"""
+        await self.__lock.acquire()
+        try:
+            count = 0
+            for key in self.__devices.keys():
+                if isinstance(key, str) and key.startswith(f"{physical_device_id}_"):
+                    count += 1
+            return count
+        finally:
+            self.__lock.release()
 
     async def get_device_by_name(self, name):
         await self.__lock.acquire()

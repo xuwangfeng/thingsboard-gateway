@@ -222,18 +222,27 @@ class AsyncBACnetConnector(Thread, Connector):
                 device_address = apdu.pduSource.__str__()
                 self.__log.info('Received APDU, from %s, trying to find device...', device_address)
 
-                added_device = await self.__devices.get_device_by_id(apdu.iAmDeviceIdentifier[1])
-                if added_device is None:
-                    self.__log.debug('Device %s not found in devices list', device_address)
-                    device_config = Device.find_self_in_config(self.__config['devices'], apdu)
-                    if device_config:
-                        self.__log.debug('Device %s found in config. Adding...', device_address)
-                        self.loop.create_task(self.__add_device(apdu, device_config))
-                    else:
-                        self.__log.debug('Device %s not found in config', device_address)
+                physical_device_id = apdu.iAmDeviceIdentifier[1]
+
+                # Find all matching configs
+                matched_configs = Device.find_all_in_config(self.__config['devices'], apdu)
+
+                if matched_configs:
+                    # For each matching config, create a virtual device if not already created
+                    for idx, device_config in enumerate(matched_configs):
+                        virtual_device_key = f"{physical_device_id}_{idx}"
+
+                        # Check if virtual device already exists
+                        existing_device = await self.__devices.get_device_by_id(virtual_device_key)
+                        if existing_device is None:
+                            self.__log.debug('Creating virtual device %s for physical device %s',
+                                           virtual_device_key, physical_device_id)
+                            # Create virtual device
+                            self.loop.create_task(self.__add_virtual_device(apdu, device_config, idx))
+                        else:
+                            existing_device.active = True
                 else:
-                    added_device.active = True
-                    self.__log.debug('Device %s already added', added_device)
+                    self.__log.debug('Device %s not found in config', device_address)
             except QueueEmpty:
                 await asyncio.sleep(.1)
             except Exception as e:
@@ -263,6 +272,41 @@ class AsyncBACnetConnector(Thread, Connector):
         self.__log.debug('Checking device %s configuration...', device.device_info.device_name)
         await self.__check_and_update_device_config(device)
         self.__log.debug('Checked device %s configuration.', device.device_info.device_name)
+
+        self.loop.create_task(device.rescan())
+
+    async def __add_virtual_device(self, apdu, device_config, virtual_index):
+        """Add a virtual device (sharing the same physical device)"""
+        await self.__set_additional_device_info_to_apdu(apdu, device_config)
+
+        # Add virtual device index to config
+        device_config['devicesRescanObjectsPeriodSeconds'] = self.__devices_rescan_objects_period
+        device_config['virtualIndex'] = virtual_index
+
+        device = Device(self.connector_type,
+                        device_config,
+                        apdu,
+                        self.__process_device_queue,
+                        self.__process_device_rescan_queue,
+                        self.__log,
+                        self.__converter_log)
+
+        # Use virtual device key for storage
+        virtual_key = f"{device.details.object_id}_{virtual_index}"
+        device.set_virtual_key(virtual_key)
+
+        await self.__devices.add(device)
+        self.__gateway.add_device(device.device_info.device_name,
+                                  {"connector": self},
+                                  device_type=device.device_info.device_type)
+        self.__log.info('Virtual device %s connected to platform', device.device_info.device_name)
+
+        self.loop.create_task(device.run())
+        self.__log.debug('Virtual device %s started', device)
+
+        self.__log.debug('Checking virtual device %s configuration...', device.device_info.device_name)
+        await self.__check_and_update_device_config(device)
+        self.__log.debug('Checked virtual device %s configuration.', device.device_info.device_name)
 
         self.loop.create_task(device.rescan())
 
