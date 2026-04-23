@@ -1445,8 +1445,8 @@ class TBGatewayService:
                             try:
                                 current_event = loads(event)
                             except Exception as e:
-                                log.error("Error while processing event from the storage, it will be skipped.",
-                                          exc_info=e)
+                                log.warning("Error while processing event from the storage, it will be skipped. Error: %s",
+                                            e)
                                 continue
 
                             if not devices_data_in_event_pack.get(current_event["deviceName"]): # noqa
@@ -1492,6 +1492,13 @@ class TBGatewayService:
                                     attribute_dp_count += 1
 
                             # log.debug("Processing attributes in event took %r seconds.", time() - start_processing_attributes_in_event) # noqa
+
+                        # If all events in the batch failed to parse, discard the corrupted batch to avoid infinite loop
+                        if not devices_data_in_event_pack:
+                            log.warning("All %d events in the batch failed to parse, discarding batch.", events_len)
+                            self._event_storage.event_pack_processing_done()
+                            continue
+
                         log.debug("Telemetry dp count: %r and attributes dp count: %r. Counting took: %r milliseconds.",  # noqa
                                   telemetry_dp_count, attribute_dp_count, int((time() - start_pack_processing)*1000))  # noqa
                         if devices_data_in_event_pack:
