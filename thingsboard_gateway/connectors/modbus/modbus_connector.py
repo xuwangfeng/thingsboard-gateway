@@ -154,7 +154,10 @@ class AsyncModbusConnector(Connector, Thread):
             task.cancel()
 
     def open(self):
-        self.start()
+        dataCollection = self.__config.get('dataCollection', False)
+        self.__log.info('是否开启: %s', dataCollection)
+        if dataCollection:
+            self.start()
 
     def run(self):
         self.__connected = True
@@ -207,11 +210,15 @@ class AsyncModbusConnector(Connector, Thread):
         return self._master_connections[master_connection_name]
 
     def __add_slave(self, slave_config):
-        slave = Slave(self, self.__log, slave_config)
-        master = self.__get_master(slave)
-        slave.master = master
+        data_collection = slave_config.get('deviceInfo', {}).get('dataCollection', False)
+        device_name = slave_config.get('deviceName', 'Unknown')
+        self.__log.info('slave 为%s， 状态: %s', device_name, data_collection)
+        if data_collection:
+            slave = Slave(self, self.__log, slave_config)
+            master = self.__get_master(slave)
+            slave.master = master
 
-        self.__slaves.append(slave)
+            self.__slaves.append(slave)
 
     def __add_slaves(self, slaves_config):
         for slave_config in slaves_config:
