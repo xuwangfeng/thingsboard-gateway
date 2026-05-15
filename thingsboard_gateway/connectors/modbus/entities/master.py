@@ -35,15 +35,14 @@ FRAMER_TYPE = {
 }
 
 
-def with_lock_for_serial(func):
+def with_lock(func):
     async def wrapper(master, *args, **kwargs):
-        if master.client_type == SERIAL_CONNECTION_TYPE_PARAMETER:
-            await master.lock.acquire()
+        await master.lock.acquire()
+
         try:
             resp = await func(master, *args, **kwargs)
         finally:
-            if master.client_type == SERIAL_CONNECTION_TYPE_PARAMETER:
-                master.lock.release()
+            master.lock.release()
 
         return resp
 
@@ -87,53 +86,53 @@ class Master:
             if not self.__client.connected:
                 await self.__client.connect()
 
-    @with_lock_for_serial
+    @with_lock
     async def close(self):
         await self.__client.close()
 
-    @with_lock_for_serial
+    @with_lock
     async def read_coils(self, address, count, unit_id):
         result = await self.__client.read_coils(address=address, count=count, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def read_discrete_inputs(self, address, count, unit_id):
         result = await self.__client.read_discrete_inputs(address=address, count=count, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def read_holding_registers(self, address, count, unit_id):
         result = await self.__client.read_holding_registers(address=address, count=count, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def read_input_registers(self, address, count, unit_id):
         result = await self.__client.read_input_registers(address=address, count=count, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def write_coil(self, address, value, unit_id):
         result = await self.__client.write_coil(address=address, value=value, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def write_register(self, address, value, unit_id):
         result = await self.__client.write_register(address=address, value=value, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def write_coils(self, address, values, unit_id):
         result = await self.__client.write_coils(address=address, values=values, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)
         return result
 
-    @with_lock_for_serial
+    @with_lock
     async def write_registers(self, address, values, unit_id):
         result = await self.__client.write_registers(address=address, values=values, slave=unit_id) # noqa
         self.__previous_request_time = int(monotonic() * 1000)

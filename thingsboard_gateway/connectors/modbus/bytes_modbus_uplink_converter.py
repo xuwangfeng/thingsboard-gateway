@@ -13,6 +13,7 @@
 #     limitations under the License.
 
 from typing import List, Union
+from decimal import Decimal, InvalidOperation
 
 from pymodbus.constants import Endian
 from pymodbus.exceptions import ModbusIOException
@@ -86,10 +87,107 @@ class BytesModbusUplinkConverter(ModbusConverter):
                                                              wordorder=word_endian_order)
                 decoded_data = self.decode_from_registers(decoder, config)
 
-                if config.get('divider'):
-                    decoded_data = float(decoded_data) / float(config['divider'])
+                if config.get('formula'):
+                    try:
+                        formula = config['formula']
+                        # Replace {原始值} placeholder with actual value and × to *
+                        expression = formula.replace('{原始值}', str(decoded_data)).replace('×', '*').replace('÷', '/')
+
+                        # Prepare eval context with safety restrictions
+                        strict_eval = config.get('strictEval', True)
+                        if strict_eval:
+                            eval_globals = {"__builtins__": {}}
+                        else:
+                            import math
+                            eval_globals = {
+                                "__builtins__": {},
+                                "abs": abs,
+                                "min": min,
+                                "max": max,
+                                "round": round,
+                                "pow": pow,
+                                "sqrt": math.sqrt,
+                                "ceil": math.ceil,
+                                "floor": math.floor,
+                            }
+
+                        # Evaluate expression
+                        calculated_value = eval(expression, eval_globals)
+
+                        # Convert to Decimal for precision handling
+                        decoded_data = Decimal(str(calculated_value))
+
+                        self._log.debug("Applied formula '%s' to value %s, result: %s",
+                                        formula, decoded_data, decoded_data)
+                    except Exception as e:
+                        self._log.warning("Failed to apply formula '%s': %s. Using original value.",
+                                          config.get('formula'), e)
+
+                elif config.get('divider'):
+                    try:
+                        decoded_data = Decimal(str(decoded_data)) / Decimal(str(config['divider']))
+                    except (InvalidOperation, ValueError) as e:
+                        self._log.warning("Failed to apply divider with Decimal precision, falling back to float: %s",
+                                          e)
+                        decoded_data = Decimal(str(float(decoded_data) / float(config['divider'])))
                 elif config.get('multiplier'):
-                    decoded_data = decoded_data * config['multiplier']
+                    try:
+                        decoded_data = Decimal(str(decoded_data)) * Decimal(str(config['multiplier']))
+                    except (InvalidOperation, ValueError) as e:
+                        self._log.warning(
+                            "Failed to apply multiplier with Decimal precision, falling back to float: %s", e)
+                        decoded_data = Decimal(str(decoded_data * config['multiplier']))
+
+                # Apply formula if configured (for functionCode 3/4 only)
+                if config.get('formula'):
+                    try:
+                        formula = config['formula']
+                        # Replace {原始值} placeholder with actual value and × to *
+                        expression = formula.replace('{原始值}', str(decoded_data)).replace('×', '*').replace('÷', '/')
+
+                        # Prepare eval context with safety restrictions
+                        strict_eval = config.get('strictEval', True)
+                        if strict_eval:
+                            eval_globals = {"__builtins__": {}}
+                        else:
+                            import math
+                            eval_globals = {
+                                "__builtins__": {},
+                                "abs": abs,
+                                "min": min,
+                                "max": max,
+                                "round": round,
+                                "pow": pow,
+                                "sqrt": math.sqrt,
+                                "ceil": math.ceil,
+                                "floor": math.floor,
+                            }
+
+                        # Evaluate expression
+                        calculated_value = eval(expression, eval_globals)
+
+                        # Convert to Decimal for precision handling
+                        decoded_data = Decimal(str(calculated_value))
+
+                        self._log.debug("Applied formula '%s' to value %s, result: %s",
+                                       formula, decoded_data, decoded_data)
+                    except Exception as e:
+                        self._log.warning("Failed to apply formula '%s': %s. Using original value.",
+                                         config.get('formula'), e)
+
+                # Apply decimal precision: truncate to 2 decimal places if exceeds, otherwise keep original
+                # This applies to all functionCode (1, 2, 3, 4) and both with/without divider/multiplier
+                if isinstance(decoded_data, Decimal):
+                    decimal_tuple = decoded_data.as_tuple()
+                    if decimal_tuple.exponent < -2:  # More than 2 decimal places
+                        decoded_data = decoded_data.quantize(Decimal('0.00'), rounding='ROUND_DOWN')
+                    decoded_data = float(decoded_data)
+                elif isinstance(decoded_data, float):
+                    # Handle float values without divider/multiplier
+                    decimal_value = Decimal(str(decoded_data))
+                    decimal_tuple = decimal_value.as_tuple()
+                    if decimal_tuple.exponent < -2:  # More than 2 decimal places
+                        decoded_data = float(decimal_value.quantize(Decimal('0.00'), rounding='ROUND_DOWN'))
         else:
             self._log.exception("Error while decoding data: %s, with config: %s", encoded_data, config)
             decoded_data = None
