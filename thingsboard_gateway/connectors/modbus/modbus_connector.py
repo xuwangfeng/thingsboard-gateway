@@ -290,7 +290,7 @@ class AsyncModbusConnector(Connector, Thread):
                 try:
                     response = await slave.read(config['functionCode'], config['address'], config['objectsCount'])
                 except asyncio.exceptions.TimeoutError:
-                    self.__log.error("Timeout error for device %s function code %s address %s, it may be caused by wrong data in server register.",  # noqa
+                    self.__log.warning("Timeout error for device %s function code %s address %s, it may be caused by wrong data in server register.",  # noqa
                                      slave.device_name, config['functionCode'], config[ADDRESS_PARAMETER])
                     continue
 

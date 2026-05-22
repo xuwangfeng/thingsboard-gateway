@@ -12,6 +12,7 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
+import math
 from typing import List, Union
 from decimal import Decimal, InvalidOperation
 
@@ -87,20 +88,23 @@ class BytesModbusUplinkConverter(ModbusConverter):
                                                              wordorder=word_endian_order)
                 decoded_data = self.decode_from_registers(decoder, config)
 
+                if isinstance(decoded_data, float) and math.isnan(decoded_data):
+                    self._log.warning("Decoded value is NaN for config: %s, skipping.", config.get('tag'))
+                    return None
+
                 if config.get('formula'):
                     try:
                         formula = config['formula']
-                        # Replace {原始值} placeholder with actual value and × to *
                         expression = formula.replace('{原始值}', str(decoded_data)).replace('×', '*').replace('÷', '/')
 
-                        # Prepare eval context with safety restrictions
                         strict_eval = config.get('strictEval', True)
                         if strict_eval:
-                            eval_globals = {"__builtins__": {}}
+                            eval_globals = {"__builtins__": {}, "nan": float('nan'), "inf": float('inf')}
                         else:
-                            import math
                             eval_globals = {
                                 "__builtins__": {},
+                                "nan": float('nan'),
+                                "inf": float('inf'),
                                 "abs": abs,
                                 "min": min,
                                 "max": max,
@@ -111,10 +115,7 @@ class BytesModbusUplinkConverter(ModbusConverter):
                                 "floor": math.floor,
                             }
 
-                        # Evaluate expression
                         calculated_value = eval(expression, eval_globals)
-
-                        # Convert to Decimal for precision handling
                         decoded_data = Decimal(str(calculated_value))
 
                         self._log.debug("Applied formula '%s' to value %s, result: %s",
@@ -137,43 +138,6 @@ class BytesModbusUplinkConverter(ModbusConverter):
                         self._log.warning(
                             "Failed to apply multiplier with Decimal precision, falling back to float: %s", e)
                         decoded_data = Decimal(str(decoded_data * config['multiplier']))
-
-                # Apply formula if configured (for functionCode 3/4 only)
-                if config.get('formula'):
-                    try:
-                        formula = config['formula']
-                        # Replace {原始值} placeholder with actual value and × to *
-                        expression = formula.replace('{原始值}', str(decoded_data)).replace('×', '*').replace('÷', '/')
-
-                        # Prepare eval context with safety restrictions
-                        strict_eval = config.get('strictEval', True)
-                        if strict_eval:
-                            eval_globals = {"__builtins__": {}}
-                        else:
-                            import math
-                            eval_globals = {
-                                "__builtins__": {},
-                                "abs": abs,
-                                "min": min,
-                                "max": max,
-                                "round": round,
-                                "pow": pow,
-                                "sqrt": math.sqrt,
-                                "ceil": math.ceil,
-                                "floor": math.floor,
-                            }
-
-                        # Evaluate expression
-                        calculated_value = eval(expression, eval_globals)
-
-                        # Convert to Decimal for precision handling
-                        decoded_data = Decimal(str(calculated_value))
-
-                        self._log.debug("Applied formula '%s' to value %s, result: %s",
-                                       formula, decoded_data, decoded_data)
-                    except Exception as e:
-                        self._log.warning("Failed to apply formula '%s': %s. Using original value.",
-                                         config.get('formula'), e)
 
                 # Apply decimal precision: truncate to 2 decimal places if exceeds, otherwise keep original
                 # This applies to all functionCode (1, 2, 3, 4) and both with/without divider/multiplier
