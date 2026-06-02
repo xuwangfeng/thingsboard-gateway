@@ -213,6 +213,10 @@ class BytesModbusUplinkConverter(ModbusConverter):
         elif lower_type == "bytes":
             decoded = decoder_functions[lower_type](size=objects_count * 2)
 
+        elif lower_type in ('8uint', '8int'):
+            decoded = decoder_functions[lower_type]()
+            decoded = decoder_functions[lower_type]()
+
         elif decoder_functions.get(lower_type) is not None:
             decoded = decoder_functions[lower_type]()
 

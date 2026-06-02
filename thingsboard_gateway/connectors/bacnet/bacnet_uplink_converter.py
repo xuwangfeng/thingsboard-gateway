@@ -13,6 +13,9 @@
 #     limitations under the License.
 
 
+import math
+from decimal import Decimal, InvalidOperation
+
 from bacpypes3.basetypes import DateTime
 from bacpypes3.constructeddata import AnyAtomic, Array
 from bacpypes3.basetypes import ErrorType, PriorityValue, ObjectPropertyReference
@@ -26,6 +29,13 @@ from thingsboard_gateway.tb_utility.tb_utility import TBUtility
 
 
 class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
+    # 支持公式计算的 objectType 列表
+    FORMULA_SUPPORTED_TYPES = {
+        'analogInput', 'analogOutput', 'analogValue',
+        'multiStateInput', 'multiStateOutput', 'multiStateValue',
+        'accumulator'
+    }
+
     def __init__(self, config: UplinkConverterConfig, logger):
         self.__log = logger
         self.__config = config
@@ -50,18 +60,20 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                     data_key, unsed_values = self.__get_data_key_name(item_config['key'], converted_values)
 
                     if len(unsed_values) == 1:
+                        value = self.__apply_formula_if_configured(unsed_values[0]['value'], item_config)
                         datapoint_key = TBUtility.convert_key_to_datapoint_key(data_key,
                                                                                device_report_strategy,
                                                                                item_config,
                                                                                self.__log)
-                        converted_data_append_methods[item_config['type']]({datapoint_key: round(unsed_values[0]['value'], 2) if isinstance(unsed_values[0]['value'], float) else str(unsed_values[0]['value'])})  # noqa
+                        converted_data_append_methods[item_config['type']]({datapoint_key: value})  # noqa
                     else:
                         for item in unsed_values:
+                            value = self.__apply_formula_if_configured(item['value'], item_config)
                             datapoint_key = TBUtility.convert_key_to_datapoint_key(f'{data_key}.{item["propName"]}',
                                                                                    device_report_strategy,
                                                                                    item_config,
                                                                                    self.__log)
-                            converted_data_append_methods[item_config['type']]({datapoint_key: round(item['value'], 2) if isinstance(item['value'], float) else str(item['value'])}) # noqa
+                            converted_data_append_methods[item_config['type']]({datapoint_key: value}) # noqa
             except Exception as e:
                 self.__log.error("Error converting data for item %s: %s", item_config, e)
                 StatisticsService.count_connector_message(self.__log.name, 'convertersError', count=1)
@@ -139,3 +151,71 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                 unused_keys.append(value_item)
 
         return key_expression, unused_keys
+
+    def __apply_formula_if_configured(self, value, config):
+        """
+        应用公式计算（如果配置中指定）
+
+        Args:
+            value: 原始值
+            config: 配置项（包含 objectType）
+
+        Returns:
+            处理后的值
+        """
+        original_value = value
+        object_type = config.get('objectType')
+
+        # 检查 objectType 是否支持公式计算
+        if object_type not in self.FORMULA_SUPPORTED_TYPES:
+            # 不支持公式计算的类型，仍需进行基本格式化处理
+            if isinstance(value, float):
+                return round(value, 2)
+            else:
+                return str(value)
+
+        if config.get('formula'):
+            try:
+                formula = config['formula']
+                expression = formula.replace('{原始值}', str(value)).replace('×', '*').replace('÷', '/')
+
+                # 宽松模式：提供安全的数学函数，但仍禁用 __builtins__ 防止执行危险代码
+                eval_globals = {
+                    "__builtins__": {},
+                    "nan": float('nan'),
+                    "inf": float('inf'),
+                    "abs": abs,
+                    "min": min,
+                    "max": max,
+                    "round": round,
+                    "pow": pow,
+                    "sqrt": math.sqrt,
+                    "ceil": math.ceil,
+                    "floor": math.floor,
+                }
+
+                calculated_value = eval(expression, eval_globals)
+                value = Decimal(str(calculated_value))
+
+                self.__log.debug("Applied formula '%s' to value %s, result: %s",
+                                 formula, original_value, value)
+            except Exception as e:
+                self.__log.warning("Failed to apply formula '%s': %s. Using original value.",
+                                   config.get('formula'), e)
+                value = original_value
+
+        # 应用小数精度：如果超过2位小数则截断，否则保留原始值
+        if isinstance(value, Decimal):
+            decimal_tuple = value.as_tuple()
+            if decimal_tuple.exponent < -2:  # 超过2位小数
+                value = value.quantize(Decimal('0.00'), rounding='ROUND_DOWN')
+            value = float(value)
+        elif isinstance(value, float):
+            decimal_value = Decimal(str(value))
+            decimal_tuple = decimal_value.as_tuple()
+            if decimal_tuple.exponent < -2:  # 超过2位小数
+                value = float(decimal_value.quantize(Decimal('0.00'), rounding='ROUND_DOWN'))
+        elif isinstance(value, int):
+            value = float(value)
+
+        return value
