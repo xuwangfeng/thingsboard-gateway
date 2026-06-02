@@ -12,6 +12,8 @@
 #     See the License for the specific language governing permissions and
 #     limitations under the License.
 
+import math
+from decimal import Decimal, InvalidOperation
 from re import search
 from time import time
 from typing import Dict
@@ -118,6 +120,10 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
                         if full_key != 'None' and full_value != 'None':
                             converted_key = TBUtility.convert_key_to_datapoint_key(full_key, self.__device_report_strategy, datatype_config, self._log)
                             converted_value = TBUtility.convert_data_type(full_value, datatype_config["type"], self.__use_eval)
+
+                            # 应用公式计算
+                            converted_value = self.__apply_formula_if_configured(converted_value, datatype_config)
+
                             if datatype == "attributes":
                                 converted_data.add_to_attributes(converted_key, converted_value)
                             else:
@@ -182,3 +188,121 @@ class JsonMqttUplinkConverter(MqttUplinkConverter):
         except Exception as e:
             self._log.error('Error in converter, for config: \n%s\n and message: \n%s\n %s', dumps(config), data, e)
         return result
+
+    def __apply_formula_if_configured(self, value, config):
+        """
+        应用公式计算（如果配置中指定）
+
+        Args:
+            value: 原始值
+            config: 数据类型配置项（可能包含 formula/divider/multiplier）
+
+        Returns:
+            处理后的值
+        """
+        original_value = value
+
+        # 尝试将值转换为数字（如果可以转换的话）
+        numeric_value = self.__try_convert_to_number(value)
+        if numeric_value is None:
+            return value
+
+        if config.get('formula'):
+            try:
+                formula = config['formula']
+                expression = formula.replace('{原始值}', str(numeric_value)).replace('×', '*').replace('÷', '/')
+
+                # 宽松模式：提供安全的数学函数，但仍禁用 __builtins__ 防止执行危险代码
+                eval_globals = {
+                    "__builtins__": {},
+                    "nan": float('nan'),
+                    "inf": float('inf'),
+                    "abs": abs,
+                    "min": min,
+                    "max": max,
+                    "round": round,
+                    "pow": pow,
+                    "sqrt": math.sqrt,
+                    "ceil": math.ceil,
+                    "floor": math.floor,
+                }
+
+                calculated_value = eval(expression, eval_globals)
+                value = Decimal(str(calculated_value))
+
+                self._log.debug("Applied formula '%s' to value %s, result: %s",
+                                formula, original_value, value)
+            except Exception as e:
+                self._log.warning("Failed to apply formula '%s': %s. Using original value.",
+                                  config.get('formula'), e)
+                value = original_value
+
+        elif config.get('divider'):
+            try:
+                value = Decimal(str(numeric_value)) / Decimal(str(config['divider']))
+            except (InvalidOperation, ValueError, TypeError) as e:
+                self._log.warning("Failed to apply divider with Decimal precision, falling back to float: %s", e)
+                try:
+                    value = Decimal(str(float(numeric_value) / float(config['divider'])))
+                except (TypeError, ZeroDivisionError) as e:
+                    self._log.warning("Failed to apply divider: %s. Using original value.", e)
+                    value = original_value
+
+        elif config.get('multiplier'):
+            try:
+                value = Decimal(str(numeric_value)) * Decimal(str(config['multiplier']))
+            except (InvalidOperation, ValueError, TypeError) as e:
+                self._log.warning("Failed to apply multiplier with Decimal precision, falling back to float: %s", e)
+                try:
+                    value = Decimal(str(numeric_value * config['multiplier']))
+                except TypeError as e:
+                    self._log.warning("Failed to apply multiplier: %s. Using original value.", e)
+                    value = original_value
+
+        # 应用小数精度：如果超过2位小数则截断，否则保留原始值
+        if isinstance(value, Decimal):
+            decimal_tuple = value.as_tuple()
+            if decimal_tuple.exponent < -2:  # 超过2位小数
+                value = value.quantize(Decimal('0.00'), rounding='ROUND_DOWN')
+            value = float(value)
+        elif isinstance(value, float):
+            decimal_value = Decimal(str(value))
+            decimal_tuple = decimal_value.as_tuple()
+            if decimal_tuple.exponent < -2:  # 超过2位小数
+                value = float(decimal_value.quantize(Decimal('0.00'), rounding='ROUND_DOWN'))
+        elif isinstance(value, int):
+            value = float(value)
+
+        return value
+
+    def __try_convert_to_number(self, value):
+        """
+        尝试将值转换为数字类型
+
+        Args:
+            value: 原始值
+
+        Returns:
+            转换后的数字（int 或 float），如果无法转换则返回 None
+        """
+        if isinstance(value, (int, float)):
+            # 排除布尔类型，因为 bool 是 int 的子类
+            if isinstance(value, bool):
+                return None
+            return value
+
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+            try:
+                # 尝试转换为 int
+                if '.' not in value and 'e' not in value.lower():
+                    return int(value)
+                else:
+                    return float(value)
+            except ValueError:
+                return None
+
+        # 其他类型无法转换
+        return None
