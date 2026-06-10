@@ -165,7 +165,10 @@ class AsyncBACnetConnector(Thread, Connector):
                 self.__log.exception('handled exception', exc_info=context['exception'])
 
     def open(self):
-        self.start()
+        dataCollection = self.__config.get('dataCollection', False)
+        self.__log.info('是否开启: %s', dataCollection)
+        if dataCollection:
+            self.start()
 
     def run(self):
         self.__connected = True
@@ -238,9 +241,10 @@ class AsyncBACnetConnector(Thread, Connector):
                             self.__log.debug('Creating virtual device %s for physical device %s',
                                            virtual_device_key, physical_device_id)
                             # Create virtual device
-                            self.loop.create_task(self.__add_virtual_device(apdu, device_config, idx))
+                            await self.__add_virtual_device(apdu, device_config, idx)
                         else:
                             existing_device.active = True
+                            self.__log.trace('Virtual device %s already exists, activating', virtual_device_key)
                 else:
                     self.__log.debug('Device %s not found in config', device_address)
             except QueueEmpty:
@@ -291,8 +295,9 @@ class AsyncBACnetConnector(Thread, Connector):
                         self.__log,
                         self.__converter_log)
 
-        # Use virtual device key for storage
-        virtual_key = f"{device.details.object_id}_{virtual_index}"
+        # Use virtual device key for storage - must match the key used in indication_callback
+        physical_device_id = apdu.iAmDeviceIdentifier[1]
+        virtual_key = f"{physical_device_id}_{virtual_index}"
         device.set_virtual_key(virtual_key)
 
         await self.__devices.add(device)

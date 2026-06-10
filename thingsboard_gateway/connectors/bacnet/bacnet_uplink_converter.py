@@ -19,6 +19,7 @@ from decimal import Decimal, InvalidOperation
 from bacpypes3.basetypes import DateTime
 from bacpypes3.constructeddata import AnyAtomic, Array
 from bacpypes3.basetypes import ErrorType, PriorityValue, ObjectPropertyReference
+from bacpypes3.primitivedata import Atomic
 
 from thingsboard_gateway.connectors.bacnet.bacnet_converter import AsyncBACnetConverter
 from thingsboard_gateway.connectors.bacnet.entities.uplink_converter_config import UplinkConverterConfig
@@ -106,6 +107,11 @@ class AsyncBACnetUplinkConverter(AsyncBACnetConverter):
                     value = value.isoformat()
                 elif isinstance(value, AnyAtomic):
                     value = str(value.get_value())
+                elif isinstance(value, Atomic):
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        value = str(value)
                 elif isinstance(value, ObjectPropertyReference):
                     result = {
                         'objectId': str(value.objectIdentifier),
