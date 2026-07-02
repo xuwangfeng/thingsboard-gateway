@@ -84,6 +84,17 @@ class BytesModbusUplinkConverter(ModbusConverter):
 
                 decoded_data = self.decode_from_registers(decoder, config)
             elif config['functionCode'] in (3, 4):
+                registers = encoded_data.registers
+                register_index = config.get('registerIndex')
+                if register_index is not None:
+                    self._log.info("读取的原始值： %s, 索引：%s", registers, register_index)
+                    objects_count = config.get('objectsCount',
+                                               config.get('registersCount',
+                                                          config.get('registerCount', 1)))
+                    registers = list(registers[register_index:register_index + objects_count])
+                    if len(registers) % 2 == 1:
+                        registers.append(0)
+                    self._log.info("修改后的值： %s", registers)
                 decoder = BinaryPayloadDecoder.fromRegisters(encoded_data.registers, byteorder=endian_order,
                                                              wordorder=word_endian_order)
                 decoded_data = self.decode_from_registers(decoder, config)
